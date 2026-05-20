@@ -42,3 +42,13 @@ venv/
 /work/
 # Ignore log files
 *.log
+# Local SQLite database
+*.db
+# Trained model artifacts and outputs
+*.pkl
+pybroker_trainer/artifacts/
+# User-specific watchlist
+yfinance_symbols/watchlist.csv
+# Screenshots and Playwright MCP outputs
+/*.png
+.playwright-mcp/

@@ -1,5 +1,7 @@
 # AlphaSuite
 
+> This is my personal copy of [AlphaSuite](https://github.com/rsandx/AlphaSuite) by [rsandx](https://github.com/rsandx), used as a base for my own experiments and changes. All credit for the original project goes to the upstream author. Released under the same [MIT License](LICENSE).
+
 AlphaSuite is an open-source quantitative analysis platform that gives you the power to build, test, and deploy professional-grade trading strategies. It's designed for traders and analysts who want to move beyond simple backtests and develop a genuine, data-driven edge in the financial markets.
 
 ## ✨ Key Features
