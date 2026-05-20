@@ -1615,7 +1615,7 @@ def predict(ticker, strategy_type):
     if result:
         print(f"Inference Result: {json.dumps(result, indent=2)}")
 
-def run_pybroker_full_backtest(ticker: str = 'SPY', start_date: str = '2000-01-01', end_date: str = '2024-12-31', strategy_type: str = 'trend_following', commission_cost: float = 0.0) -> Optional[dict]:
+def run_pybroker_full_backtest(ticker: str = 'SPY', start_date: str = '2000-01-01', end_date: str = '2024-12-31', strategy_type: str = 'trend_following', commission_cost: float = 0.0, initial_cash: float = 100000.0) -> Optional[dict]:
     """
     Runs a full, in-sample backtest using a pre-trained model saved by the 'train' command.
     This function loads the saved model and its associated parameters, then runs a backtest
@@ -1689,12 +1689,13 @@ def run_pybroker_full_backtest(ticker: str = 'SPY', start_date: str = '2000-01-0
 
         # --- Step 5: Configure and run the backtest ---
         strategy_config = StrategyConfig(
-            position_mode=PositionMode.LONG_ONLY, 
+            initial_cash=initial_cash,
+            position_mode=PositionMode.LONG_ONLY,
             exit_on_last_bar=True,
             fee_mode=pybroker.FeeMode.PER_SHARE if commission_cost > 0 else None,
             fee_amount=commission_cost
         )
-        
+
         trader = strategy_instance.get_trader(model_name if is_ml else None, {ticker: strategy_params})
         strategy = Strategy(data_source=data_df, start_date=start_date, end_date=end_date, config=strategy_config)
         if is_ml:

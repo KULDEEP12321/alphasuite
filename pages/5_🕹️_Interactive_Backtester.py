@@ -63,12 +63,46 @@ with col1:
     selected_model = st.selectbox(
         "Select a Trained Model (Ticker & Strategy):",
         options=available_models,
-        help="This list is populated from trained models found in the `models/` directory.",
+        help="This list is populated from trained models found in the `pybroker_trainer/artifacts/` directory.",
         key="selected_model_bt",
         on_change=clear_bt_results
     )
 
 with col2:
+    cash_input = st.number_input(
+        "Starting cash ($):",
+        min_value=1000.0,
+        value=100000.0,
+        step=10000.0,
+        format="%.0f",
+        key="cash_bt",
+        on_change=clear_bt_results,
+    )
+
+col3, col4, col5, col6 = st.columns([1, 1, 1, 2])
+_MIN_DATE = datetime(1980, 1, 1)
+_MAX_DATE = datetime.now()
+with col3:
+    start_date_input = st.date_input(
+        "Start Date",
+        value=datetime(2015, 1, 1),
+        min_value=_MIN_DATE,
+        max_value=_MAX_DATE,
+        key="start_date_bt",
+        on_change=clear_bt_results,
+    )
+
+with col4:
+    end_date_input = st.date_input(
+        "End Date",
+        value=_MAX_DATE,
+        min_value=_MIN_DATE,
+        max_value=_MAX_DATE,
+        key="end_date_bt",
+        on_change=clear_bt_results,
+    )
+
+with col5:
     commission_input = st.number_input(
         "Commission (per share):",
         min_value=0.0,
@@ -76,24 +110,10 @@ with col2:
         step=0.001,
         format="%.4f",
         key="commission_bt",
-        on_change=clear_bt_results
+        on_change=clear_bt_results,
     )
 
-col3, col4, col5 = st.columns([1, 1, 2])
-with col3:
-    start_date_input = st.date_input(
-        "Start Date",
-        value=datetime(2000, 1, 1),
-        key="start_date_bt",
-        on_change=clear_bt_results
-    )
-
-with col4:
-    end_date_input = st.date_input(
-        "End Date", value=datetime.now(), key="end_date_bt", on_change=clear_bt_results
-    )
-
-with col5:
+with col6:
     st.write("") # Spacer
     st.write("") # Spacer
     run_button = st.button("🚀 Run Backtest", use_container_width=True, disabled=not available_models)
@@ -113,7 +133,8 @@ if run_button:
                     strategy_type=strategy_select,
                     start_date=start_date_input.strftime('%Y-%m-%d'),
                     end_date=end_date_input.strftime('%Y-%m-%d'),
-                    commission_cost=commission_input
+                    commission_cost=commission_input,
+                    initial_cash=float(cash_input),
                 )
                 st.session_state.bt_artifacts = backtest_artifacts
                 st.session_state.bt_ticker = ticker_input # Save for display
