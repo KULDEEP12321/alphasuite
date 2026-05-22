@@ -1,5 +1,7 @@
 # Core Framework
 streamlit
+streamlit-lightweight-charts
+streamlit-autorefresh
 
 # Database
 SQLAlchemy
