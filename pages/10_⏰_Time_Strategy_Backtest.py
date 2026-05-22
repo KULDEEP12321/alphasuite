@@ -74,8 +74,22 @@ with st.container(border=True):
     c5, c6, c7, c8 = st.columns(4)
     sl_pts = c5.number_input("Stop loss (USD)", min_value=10.0, value=300.0, step=10.0)
     tp_pts = c6.number_input("Take profit (USD)", min_value=10.0, value=1000.0, step=10.0)
-    pos_usd = c7.number_input("Position size per trade (USD)", min_value=1.0, value=20.0, step=1.0)
-    init_cap = c8.number_input("Starting capital (USD)", min_value=10.0, value=1000.0, step=100.0)
+    init_cap = c7.number_input("Starting capital (USD)", min_value=10.0, value=1000.0, step=100.0)
+    sizing = c8.selectbox(
+        "Position sizing",
+        ["Fixed USD per trade", "Compound (full capital each trade)", "Fixed risk per trade"],
+        index=1,
+        help="Fixed USD: same dollar amount each trade. Compound: each trade uses all current equity. Fixed risk: position size = (risk_$ / SL_$) × equity.",
+    )
+    if sizing == "Fixed USD per trade":
+        pos_usd = st.number_input("USD per trade", min_value=1.0, value=200.0, step=10.0)
+        risk_pct = None
+    elif sizing == "Fixed risk per trade":
+        pos_usd = None
+        risk_pct = st.number_input("Risk % of equity per trade", min_value=0.1, max_value=20.0, value=1.0, step=0.1)
+    else:
+        pos_usd = None
+        risk_pct = None
 
     c9, c10, c11 = st.columns([2, 2, 3])
     today = date.today()
@@ -131,9 +145,20 @@ def fetch_klines(symbol: str, interval: str, start_ms: int, end_ms: int) -> pd.D
     return df.reset_index(drop=True)
 
 
-def run_backtest(df: pd.DataFrame, sig_time: str, ent_time: str, sl_pts: float, tp_pts: float, pos_usd: float):
+def run_backtest(
+    df: pd.DataFrame,
+    sig_time: str,
+    ent_time: str,
+    sl_pts: float,
+    tp_pts: float,
+    sizing_mode: str,
+    init_cap: float,
+    pos_usd: float | None,
+    risk_pct: float | None,
+):
     """Walk through each date; enter at ent_time based on direction vs sig_time; exit on SL or TP."""
     trades = []
+    equity = init_cap
     daily_groups = df.groupby("date", sort=True)
     for d, day in daily_groups:
         sig_row = day[day["hhmm"] == sig_time]
@@ -183,11 +208,26 @@ def run_backtest(df: pd.DataFrame, sig_time: str, ent_time: str, sl_pts: float, 
             else:
                 continue
 
-        coins = pos_usd / ent_price
+        # Position sizing
+        if sizing_mode == "Fixed USD per trade":
+            stake_usd = pos_usd
+        elif sizing_mode == "Compound (full capital each trade)":
+            stake_usd = max(equity, 0)
+        else:  # Fixed risk per trade
+            risk_dollar = equity * (risk_pct / 100.0)
+            stake_usd = risk_dollar / sl_pts * ent_price
+            stake_usd = min(stake_usd, equity)  # cap at equity, no leverage
+
+        if stake_usd <= 0:
+            break  # blew up
+
+        coins = stake_usd / ent_price
         if direction == "long":
             pnl = coins * (exit_price - ent_price)
         else:
             pnl = coins * (ent_price - exit_price)
+
+        equity += pnl
 
         trades.append(
             {
@@ -200,8 +240,10 @@ def run_backtest(df: pd.DataFrame, sig_time: str, ent_time: str, sl_pts: float, 
                 "exit_dt": exit_dt,
                 "exit": exit_price,
                 "reason": exit_reason,
+                "stake_usd": stake_usd,
                 "coins": coins,
                 "pnl": pnl,
+                "equity_after": equity,
             }
         )
     return pd.DataFrame(trades)
@@ -222,14 +264,19 @@ if run:
     st.caption(f"Fetched {len(df):,} bars · {df['dt'].min()} → {df['dt'].max()}")
 
     with st.spinner("Running backtest…"):
-        trades = run_backtest(df, signal_time, entry_time, sl_pts, tp_pts, pos_usd)
+        trades = run_backtest(
+            df, signal_time, entry_time, sl_pts, tp_pts,
+            sizing, init_cap, pos_usd, risk_pct,
+        )
 
     if trades.empty:
         st.warning("No trades generated. The bar interval may not align with your entry/signal times.")
         st.stop()
 
     trades = trades.sort_values("entry_dt").reset_index(drop=True)
-    trades["equity"] = init_cap + trades["pnl"].cumsum()
+    # 'equity_after' is computed inside run_backtest (handles compound correctly).
+    # For non-compound modes, equity_after still tracks the running total — same result.
+    trades["equity"] = trades["equity_after"]
 
     # ---------- Summary metrics ----------
     n = len(trades)
@@ -249,20 +296,61 @@ if run:
     dd = (eq - peak) / peak * 100
     max_dd = dd.min() if len(dd) else 0
 
-    st.markdown('<div class="section-h">Results</div>', unsafe_allow_html=True)
+    pnl_pct = (total_pnl / init_cap) * 100 if init_cap else 0
+    is_win = total_pnl >= 0
+    hero_color = "#10b981" if is_win else "#ef4444"
+    hero_bg = "rgba(16,185,129,0.08)" if is_win else "rgba(239,68,68,0.08)"
+    hero_border = "rgba(16,185,129,0.4)" if is_win else "rgba(239,68,68,0.4)"
+    sign = "+" if total_pnl >= 0 else ""
+
+    st.markdown('<div class="section-h">Bottom line</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div style="
+            background: {hero_bg};
+            border: 1px solid {hero_border};
+            border-radius: 16px;
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        ">
+            <div>
+                <div style="font-size: 0.75rem; color: #888; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 600;">
+                    Final equity
+                </div>
+                <div style="font-size: 3rem; font-weight: 800; color: white; line-height: 1; margin-top: 0.35rem;">
+                    ${final_eq:,.2f}
+                </div>
+                <div style="margin-top: 0.5rem; color: #aaa; font-size: 0.9rem;">
+                    Started with <b style="color:#ccc;">${init_cap:,.2f}</b> · sizing: <b style="color:#ccc;">{sizing}</b>
+                </div>
+            </div>
+            <div style="text-align: right;">
+                <div style="font-size: 0.75rem; color: #888; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 600;">
+                    Net P&amp;L
+                </div>
+                <div style="font-size: 2.2rem; font-weight: 800; color: {hero_color}; line-height: 1; margin-top: 0.35rem;">
+                    {sign}${total_pnl:,.2f}
+                </div>
+                <div style="margin-top: 0.5rem; font-size: 1.1rem; color: {hero_color}; font-weight: 600;">
+                    {sign}{pnl_pct:.2f}%
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="section-h">Details</div>', unsafe_allow_html=True)
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Trades", f"{n}", f"{open_trades} open")
     m2.metric("Win rate", f"{win_rate:.1f}%", f"{wins}W / {losses}L")
-    m3.metric("Total PnL", f"${total_pnl:,.2f}", f"{total_pnl/init_cap*100:+.2f}%")
-    m4.metric("Final equity", f"${final_eq:,.2f}")
-    m5.metric("Max drawdown", f"{max_dd:.2f}%")
-
-    m6, m7, m8, m9 = st.columns(4)
-    m6.metric("Avg win", f"${avg_win:,.4f}")
-    m7.metric("Avg loss", f"${avg_loss:,.4f}" if losses else "—")
+    m3.metric("Max drawdown", f"{max_dd:.2f}%")
     expectancy = (win_rate / 100) * avg_win + (1 - win_rate / 100) * avg_loss if closed else 0
-    m8.metric("Expectancy / trade", f"${expectancy:,.4f}")
-    m9.metric(
+    m4.metric("Expectancy / trade", f"${expectancy:,.4f}")
+    m5.metric(
         "Longs / Shorts",
         f"{(trades['direction']=='long').sum()} / {(trades['direction']=='short').sum()}",
     )
@@ -307,8 +395,9 @@ if run:
     pretty["tp"] = pretty["tp"].round(2)
     pretty["exit"] = pretty["exit"].round(2)
     pretty["pnl"] = pretty["pnl"].round(4)
-    pretty["equity"] = pretty["equity"].round(4)
-    pretty = pretty.drop(columns=["coins", "date"])
+    pretty["equity"] = pretty["equity"].round(2)
+    pretty["stake_usd"] = pretty["stake_usd"].round(2)
+    pretty = pretty.drop(columns=["coins", "date", "equity_after"])
     st.dataframe(pretty, use_container_width=True, hide_index=True)
 
     csv = pretty.to_csv(index=False).encode("utf-8")
