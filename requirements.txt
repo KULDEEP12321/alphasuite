@@ -30,6 +30,7 @@ TA-Lib
 langchain
 langchain-google-genai
 google-generativeai
+groq
 textblob
 vaderSentiment
 
