@@ -3,79 +3,83 @@ Live market chart for crypto (Binance, real-time) and US stocks (yfinance, ~15mi
 TradingView Lightweight Charts for rendering. No API keys required.
 """
 import time
-import requests
+
 import pandas as pd
+import requests
 import streamlit as st
 import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
 from streamlit_lightweight_charts import renderLightweightCharts
 
-st.set_page_config(page_title="Live Market Chart", layout="wide")
+from tools.ui_theme import (
+    apply_theme,
+    chart_options,
+    chart_shell_close,
+    chart_shell_open,
+    hero_header,
+    section_header,
+)
 
+st.set_page_config(page_title="Live Market Chart", layout="wide")
+apply_theme()
+
+# Page-specific tweaks layered on top of the shared theme
 st.markdown(
     """
     <style>
-        .block-container { padding-top: 1.5rem; }
-        .market-hero {
-            background: linear-gradient(120deg, #1e3a8a 0%, #6366f1 60%, #8b5cf6 100%);
-            padding: 1.1rem 1.6rem;
-            border-radius: 14px;
-            margin-bottom: 1.25rem;
-            color: white;
-            box-shadow: 0 6px 24px rgba(99,102,241,0.18);
-        }
-        .market-hero h1 { margin: 0; font-size: 1.7rem; font-weight: 700; }
-        .market-hero p { margin: 0.2rem 0 0 0; opacity: 0.85; font-size: 0.9rem; }
-        .section-h {
-            font-size: 0.72rem;
-            text-transform: uppercase;
-            letter-spacing: 0.12em;
-            color: #888;
-            margin: 1rem 0 0.4rem 0;
-            font-weight: 600;
-        }
-        [data-testid="stMetric"] {
-            background: rgba(255,255,255,0.025);
-            border: 1px solid rgba(255,255,255,0.07);
-            padding: 0.6rem 0.85rem;
-            border-radius: 10px;
-            transition: border-color 0.15s ease, background 0.15s ease;
+        /* Price panel for the active symbol */
+        .price-panel {
+            padding: 1.2rem 1.4rem;
+            background: var(--glass-bg);
+            border-radius: 16px;
+            border: 1px solid var(--glass-border);
+            height: 100%;
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            position: relative;
             overflow: hidden;
         }
-        [data-testid="stMetric"]:hover {
-            border-color: rgba(99,102,241,0.5);
-            background: rgba(99,102,241,0.05);
+        .price-panel::before {
+            content: "";
+            position: absolute; top: 0; left: 0; right: 0; height: 2px;
+            background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+            opacity: 0.7;
         }
-        [data-testid="stMetricValue"] {
-            font-size: 1.15rem !important;
-            font-weight: 600;
+        .price-panel .sym {
+            font-size: 0.72rem; color: var(--text-3);
+            letter-spacing: 0.12em; text-transform: uppercase;
+            font-weight: 700;
         }
-        [data-testid="stMetricLabel"] { font-size: 0.7rem !important; }
-        [data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
-        .price-panel {
-            padding: 1rem 1.2rem;
-            background: rgba(255,255,255,0.025);
-            border-radius: 12px;
-            border: 1px solid rgba(255,255,255,0.07);
-            height: 100%;
+        .price-panel .px {
+            font-size: 2.4rem; font-weight: 800;
+            color: var(--text-1);
+            margin-top: 0.4rem; line-height: 1;
+            letter-spacing: -0.02em;
+            font-feature-settings: "tnum" 1;
         }
-        .price-panel .sym { font-size: 0.72rem; color: #888; letter-spacing: 0.08em; text-transform: uppercase; }
-        .price-panel .px { font-size: 2.1rem; font-weight: 700; color: #fafafa; margin-top: 0.25rem; line-height: 1; }
-        .price-panel .delta { font-size: 1rem; margin-top: 0.4rem; font-weight: 500; }
-        .price-panel .ohlc { margin-top: 0.9rem; font-size: 0.82rem; color: #aaa; line-height: 1.6; }
+        .price-panel .delta {
+            font-size: 1rem; margin-top: 0.6rem; font-weight: 700;
+            display: inline-flex; align-items: center; gap: 0.35rem;
+            padding: 0.25rem 0.6rem;
+            border-radius: 999px;
+            border: 1px solid currentColor;
+        }
+        .price-panel .ohlc {
+            margin-top: 1.1rem; padding-top: 0.9rem;
+            border-top: 1px solid var(--glass-border);
+            font-size: 0.85rem; color: var(--text-2); line-height: 1.7;
+            font-feature-settings: "tnum" 1;
+        }
+        .price-panel .ohlc b { color: var(--text-1); font-weight: 600; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.markdown(
-    """
-    <div class="market-hero">
-        <h1>💹 Live Market Chart</h1>
-        <p>Crypto from Binance (real-time) · Stocks from Yahoo Finance (~15 min delayed) · No API keys</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
+hero_header(
+    "💹 Live Market Chart",
+    subtitle="Crypto from Binance (real-time) · Stocks from Yahoo Finance (~15 min delayed) · No API keys",
+    chips=["Binance · Real-time", "Yahoo · Stocks", "TradingView Lightweight Charts"],
 )
 
 
@@ -170,7 +174,7 @@ def get_quote(sym, klass):
 
 
 # --- Watchlist row ---
-st.markdown('<div class="section-h">Watchlist · click a symbol to switch</div>', unsafe_allow_html=True)
+st.markdown(section_header("👁", "Watchlist · click a symbol to switch"), unsafe_allow_html=True)
 cols = st.columns(len(symbols))
 for i, sym in enumerate(symbols):
     with cols[i]:
@@ -186,7 +190,7 @@ for i, sym in enumerate(symbols):
 
 
 # --- Controls ---
-st.markdown('<div class="section-h">View</div>', unsafe_allow_html=True)
+st.markdown(section_header("⚙", "View"), unsafe_allow_html=True)
 c1, c2, c3 = st.columns([3, 4, 2])
 
 with c1:
@@ -249,7 +253,7 @@ volume = [
     {
         "time": int(r.t),
         "value": r.v,
-        "color": "rgba(38,166,154,0.5)" if r.c >= r.o else "rgba(239,83,80,0.5)",
+        "color": "rgba(16,217,160,0.45)" if r.c >= r.o else "rgba(255,84,112,0.45)",
     }
     for r in df.itertuples()
 ]
@@ -259,11 +263,11 @@ series = [
         "type": "Candlestick",
         "data": candles,
         "options": {
-            "upColor": "#26a69a",
-            "downColor": "#ef5350",
+            "upColor": "#10d9a0",
+            "downColor": "#ff5470",
             "borderVisible": False,
-            "wickUpColor": "#26a69a",
-            "wickDownColor": "#ef5350",
+            "wickUpColor": "#10d9a0",
+            "wickDownColor": "#ff5470",
         },
     },
 ]
@@ -283,11 +287,11 @@ def _line_from(values, color, title):
 
 
 if "SMA 20" in indicators:
-    series.append(_line_from(df["c"].rolling(20).mean(), "#42a5f5", "SMA20"))
+    series.append(_line_from(df["c"].rolling(20).mean(), "#8b5cf6", "SMA20"))
 if "SMA 50" in indicators:
     series.append(_line_from(df["c"].rolling(50).mean(), "#fbbf24", "SMA50"))
 if "EMA 9" in indicators:
-    series.append(_line_from(df["c"].ewm(span=9, adjust=False).mean(), "#f472b6", "EMA9"))
+    series.append(_line_from(df["c"].ewm(span=9, adjust=False).mean(), "#ec4899", "EMA9"))
 if "Volume" in indicators:
     series.append(
         {
@@ -298,26 +302,10 @@ if "Volume" in indicators:
         }
     )
 
-chart_options = {
-    "height": 540,
-    "layout": {"background": {"type": "solid", "color": "#0d1117"}, "textColor": "#d1d4dc"},
-    "grid": {
-        "vertLines": {"color": "rgba(197,203,206,0.10)"},
-        "horzLines": {"color": "rgba(197,203,206,0.10)"},
-    },
-    "timeScale": {
-        "timeVisible": True,
-        "secondsVisible": False,
-        "borderColor": "rgba(197,203,206,0.4)",
-    },
-    "rightPriceScale": {"borderColor": "rgba(197,203,206,0.4)"},
-    "crosshair": {"mode": 1},
-}
-
 
 # --- Active-symbol panel + chart ---
 q = get_quote(sym, asset_class)
-delta_color = "#22c55e" if q["pct"] >= 0 else "#ef4444"
+delta_color = "var(--pos)" if q["pct"] >= 0 else "var(--neg)"
 arrow = "▲" if q["pct"] >= 0 else "▼"
 
 left, right = st.columns([2, 7])
@@ -338,10 +326,13 @@ with left:
         unsafe_allow_html=True,
     )
 with right:
+    opts = chart_options(540)
+    st.markdown(chart_shell_open(), unsafe_allow_html=True)
     renderLightweightCharts(
-        [{"chart": chart_options, "series": series}],
+        [{"chart": opts, "series": series}],
         key=f"chart_{sym}_{interval}",
     )
+    st.markdown(chart_shell_close(), unsafe_allow_html=True)
 
 source_note = "Binance · real-time" if asset_class == "Crypto" else "Yahoo Finance · ~15 min delayed"
 st.caption(

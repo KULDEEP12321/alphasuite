@@ -7,64 +7,36 @@ Strategy template:
 - Exit when stop-loss or take-profit (in price points / USD) is touched, walking forward through bars.
 """
 from datetime import date, datetime, timedelta, timezone
-import time
-import requests
+
 import pandas as pd
+import requests
 import streamlit as st
 from streamlit_lightweight_charts import renderLightweightCharts
 
-st.set_page_config(page_title="Time Strategy Backtest", layout="wide")
-
-st.markdown(
-    """
-    <style>
-        .block-container { padding-top: 1.5rem; }
-        .ts-hero {
-            background: linear-gradient(120deg, #064e3b 0%, #059669 60%, #10b981 100%);
-            padding: 1.1rem 1.6rem;
-            border-radius: 14px;
-            margin-bottom: 1.25rem;
-            color: white;
-            box-shadow: 0 6px 24px rgba(16,185,129,0.18);
-        }
-        .ts-hero h1 { margin: 0; font-size: 1.7rem; font-weight: 700; }
-        .ts-hero p { margin: 0.2rem 0 0 0; opacity: 0.85; font-size: 0.9rem; }
-        .section-h {
-            font-size: 0.72rem;
-            text-transform: uppercase;
-            letter-spacing: 0.12em;
-            color: #888;
-            margin: 1rem 0 0.4rem 0;
-            font-weight: 600;
-        }
-        [data-testid="stMetric"] {
-            background: rgba(255,255,255,0.025);
-            border: 1px solid rgba(255,255,255,0.07);
-            padding: 0.6rem 0.85rem;
-            border-radius: 10px;
-        }
-        [data-testid="stMetricValue"] { font-size: 1.4rem !important; font-weight: 700; }
-        [data-testid="stMetricLabel"] { font-size: 0.72rem !important; }
-        [data-testid="stMetricDelta"] { font-size: 0.8rem !important; }
-    </style>
-    """,
-    unsafe_allow_html=True,
+from tools.ui_theme import (
+    apply_theme,
+    area_series,
+    chart_options,
+    chart_shell_close,
+    chart_shell_open,
+    hero_header,
+    result_panel,
+    section_header,
 )
 
-st.markdown(
-    """
-    <div class="ts-hero">
-        <h1>⏰ Time Strategy Backtest</h1>
-        <p>Daily entry at a fixed UTC time · long/short by recent momentum · fixed SL/TP in price points</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
+st.set_page_config(page_title="Time Strategy Backtest", layout="wide")
+apply_theme()
+
+hero_header(
+    "⏰ Time Strategy Backtest",
+    subtitle="Daily entry at a fixed UTC time · long/short by recent momentum · fixed SL/TP in price points.",
+    chips=["Binance · OHLCV", "Walk-forward simulation", "Compound · Fixed USD · Risk %"],
 )
 
 
 # ---------- Inputs ----------
+st.markdown(section_header(1, "Strategy parameters"), unsafe_allow_html=True)
 with st.container(border=True):
-    st.markdown('<div class="section-h">Strategy parameters</div>', unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     symbol = c1.selectbox("Symbol", ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"], 0)
     signal_time = c2.text_input("Signal time (UTC, HH:MM)", "09:30")
@@ -97,15 +69,15 @@ with st.container(border=True):
     end_d = c10.date_input("End date", value=today, max_value=today)
     c11.markdown(
         f"""
-        <div style="padding-top: 1.4rem; color: #888; font-size: 0.85rem;">
-            Strategy: at <b>{signal_time}</b> note price · at <b>{entry_time}</b> go <b style="color:#10b981;">LONG</b> if price rose, else <b style="color:#ef4444;">SHORT</b><br/>
-            Risk: <b>${sl_pts:.0f}</b> SL · Reward: <b>${tp_pts:.0f}</b> TP · R:R = <b>1:{tp_pts/sl_pts:.2f}</b>
+        <div style="padding-top: 1.4rem; color: var(--text-2); font-size: 0.85rem; line-height: 1.6;">
+            Strategy: at <b style="color:var(--text-1);">{signal_time}</b> note price · at <b style="color:var(--text-1);">{entry_time}</b> go <b style="color: var(--pos);">LONG</b> if price rose, else <b style="color: var(--neg);">SHORT</b><br/>
+            Risk: <b style="color:var(--text-1);">${sl_pts:.0f}</b> SL · Reward: <b style="color:var(--text-1);">${tp_pts:.0f}</b> TP · R:R = <b style="color:var(--text-1);">1:{tp_pts/sl_pts:.2f}</b>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-run = st.button("🚀 Run backtest", type="primary", use_container_width=True)
+run = st.button("🚀  Run backtest", type="primary", use_container_width=True)
 
 
 # ---------- Helpers ----------
@@ -169,14 +141,13 @@ def run_backtest(
         ent_idx = int(ent_row.iloc[0].name)
         ent_price = float(ent_row.iloc[0]["o"])
         if ent_price == sig_price:
-            continue  # no direction signal
+            continue
         direction = "long" if ent_price > sig_price else "short"
         if direction == "long":
             sl, tp = ent_price - sl_pts, ent_price + tp_pts
         else:
             sl, tp = ent_price + sl_pts, ent_price - tp_pts
 
-        # Walk forward through subsequent bars
         forward = df.iloc[ent_idx + 1:]
         exit_price = None
         exit_reason = "OPEN"
@@ -189,7 +160,6 @@ def run_backtest(
                 hit_sl = row.h >= sl
                 hit_tp = row.l <= tp
             if hit_sl and hit_tp:
-                # Both touched in same bar — conservative: assume SL first
                 exit_price, exit_reason, exit_dt = sl, "SL", row.dt
                 break
             if hit_sl:
@@ -200,7 +170,6 @@ def run_backtest(
                 break
 
         if exit_price is None:
-            # Position never closed — mark with last available close
             if len(forward):
                 last = forward.iloc[-1]
                 exit_price = float(last["c"])
@@ -208,18 +177,17 @@ def run_backtest(
             else:
                 continue
 
-        # Position sizing
         if sizing_mode == "Fixed USD per trade":
             stake_usd = pos_usd
         elif sizing_mode == "Compound (full capital each trade)":
             stake_usd = max(equity, 0)
-        else:  # Fixed risk per trade
+        else:
             risk_dollar = equity * (risk_pct / 100.0)
             stake_usd = risk_dollar / sl_pts * ent_price
-            stake_usd = min(stake_usd, equity)  # cap at equity, no leverage
+            stake_usd = min(stake_usd, equity)
 
         if stake_usd <= 0:
-            break  # blew up
+            break
 
         coins = stake_usd / ent_price
         if direction == "long":
@@ -274,11 +242,8 @@ if run:
         st.stop()
 
     trades = trades.sort_values("entry_dt").reset_index(drop=True)
-    # 'equity_after' is computed inside run_backtest (handles compound correctly).
-    # For non-compound modes, equity_after still tracks the running total — same result.
     trades["equity"] = trades["equity_after"]
 
-    # ---------- Summary metrics ----------
     n = len(trades)
     wins = (trades["reason"] == "TP").sum()
     losses = (trades["reason"] == "SL").sum()
@@ -290,62 +255,27 @@ if run:
     avg_win = trades.loc[trades["reason"] == "TP", "pnl"].mean() if wins else 0
     avg_loss = trades.loc[trades["reason"] == "SL", "pnl"].mean() if losses else 0
 
-    # Max drawdown
     eq = trades["equity"].values
     peak = pd.Series(eq).cummax()
     dd = (eq - peak) / peak * 100
-    max_dd = dd.min() if len(dd) else 0
-
+    max_dd = float(dd.min()) if len(dd) else 0
     pnl_pct = (total_pnl / init_cap) * 100 if init_cap else 0
-    is_win = total_pnl >= 0
-    hero_color = "#10b981" if is_win else "#ef4444"
-    hero_bg = "rgba(16,185,129,0.08)" if is_win else "rgba(239,68,68,0.08)"
-    hero_border = "rgba(16,185,129,0.4)" if is_win else "rgba(239,68,68,0.4)"
-    sign = "+" if total_pnl >= 0 else ""
 
-    st.markdown('<div class="section-h">Bottom line</div>', unsafe_allow_html=True)
+    st.markdown(section_header(2, "Bottom line"), unsafe_allow_html=True)
     st.markdown(
-        f"""
-        <div style="
-            background: {hero_bg};
-            border: 1px solid {hero_border};
-            border-radius: 16px;
-            padding: 1.5rem 2rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-        ">
-            <div>
-                <div style="font-size: 0.75rem; color: #888; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 600;">
-                    Final equity
-                </div>
-                <div style="font-size: 3rem; font-weight: 800; color: white; line-height: 1; margin-top: 0.35rem;">
-                    ${final_eq:,.2f}
-                </div>
-                <div style="margin-top: 0.5rem; color: #aaa; font-size: 0.9rem;">
-                    Started with <b style="color:#ccc;">${init_cap:,.2f}</b> · sizing: <b style="color:#ccc;">{sizing}</b>
-                </div>
-            </div>
-            <div style="text-align: right;">
-                <div style="font-size: 0.75rem; color: #888; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 600;">
-                    Net P&amp;L
-                </div>
-                <div style="font-size: 2.2rem; font-weight: 800; color: {hero_color}; line-height: 1; margin-top: 0.35rem;">
-                    {sign}${total_pnl:,.2f}
-                </div>
-                <div style="margin-top: 0.5rem; font-size: 1.1rem; color: {hero_color}; font-weight: 600;">
-                    {sign}{pnl_pct:.2f}%
-                </div>
-            </div>
-        </div>
-        """,
+        result_panel(
+            final_eq=final_eq,
+            init_cap=init_cap,
+            total_pnl=total_pnl,
+            pnl_pct=pnl_pct,
+            meta=f"{symbol} {interval} · sizing {sizing} ·",
+        ),
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="section-h">Details</div>', unsafe_allow_html=True)
+    st.markdown(section_header("📊", "Details"), unsafe_allow_html=True)
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Trades", f"{n}", f"{open_trades} open")
+    m1.metric("Trades", f"{n}", f"{open_trades} open" if open_trades else None)
     m2.metric("Win rate", f"{win_rate:.1f}%", f"{wins}W / {losses}L")
     m3.metric("Max drawdown", f"{max_dd:.2f}%")
     expectancy = (win_rate / 100) * avg_win + (1 - win_rate / 100) * avg_loss if closed else 0
@@ -355,52 +285,33 @@ if run:
         f"{(trades['direction']=='long').sum()} / {(trades['direction']=='short').sum()}",
     )
 
-    # ---------- Equity curve ----------
-    st.markdown('<div class="section-h">Equity curve</div>', unsafe_allow_html=True)
+    # Equity curve
+    st.markdown(section_header("📈", "Equity curve"), unsafe_allow_html=True)
     eq_data = [
         {"time": int(pd.Timestamp(r.entry_dt).timestamp()), "value": float(r.equity)}
         for r in trades.itertuples()
     ]
-    chart_options = {
-        "height": 380,
-        "layout": {"background": {"type": "solid", "color": "#0d1117"}, "textColor": "#d1d4dc"},
-        "grid": {
-            "vertLines": {"color": "rgba(197,203,206,0.10)"},
-            "horzLines": {"color": "rgba(197,203,206,0.10)"},
-        },
-        "timeScale": {"timeVisible": True, "secondsVisible": False, "borderColor": "rgba(197,203,206,0.4)"},
-        "rightPriceScale": {"borderColor": "rgba(197,203,206,0.4)"},
-    }
-    series = [
-        {
-            "type": "Area",
-            "data": eq_data,
-            "options": {
-                "topColor": "rgba(16,185,129,0.35)",
-                "bottomColor": "rgba(16,185,129,0.02)",
-                "lineColor": "#10b981",
-                "lineWidth": 2,
-            },
-        }
-    ]
-    renderLightweightCharts([{"chart": chart_options, "series": series}], key=f"eq_{symbol}_{start_d}_{end_d}")
+    accent = "#10d9a0" if total_pnl >= 0 else "#ff5470"
 
-    # ---------- Trade log ----------
-    st.markdown('<div class="section-h">Trade log</div>', unsafe_allow_html=True)
+    st.markdown(chart_shell_open(), unsafe_allow_html=True)
+    renderLightweightCharts(
+        [{"chart": chart_options(420), "series": [area_series(eq_data, accent=accent)]}],
+        key=f"eq_{symbol}_{start_d}_{end_d}",
+    )
+    st.markdown(chart_shell_close(), unsafe_allow_html=True)
+
+    # Trade log
+    st.markdown(section_header("📋", "Trade log"), unsafe_allow_html=True)
     pretty = trades.copy()
     pretty["entry_dt"] = pretty["entry_dt"].dt.strftime("%Y-%m-%d %H:%M")
     pretty["exit_dt"] = pretty["exit_dt"].dt.strftime("%Y-%m-%d %H:%M")
-    pretty["entry"] = pretty["entry"].round(2)
-    pretty["sl"] = pretty["sl"].round(2)
-    pretty["tp"] = pretty["tp"].round(2)
-    pretty["exit"] = pretty["exit"].round(2)
+    for c in ["entry", "sl", "tp", "exit", "equity", "stake_usd"]:
+        pretty[c] = pretty[c].round(2)
     pretty["pnl"] = pretty["pnl"].round(4)
-    pretty["equity"] = pretty["equity"].round(2)
-    pretty["stake_usd"] = pretty["stake_usd"].round(2)
     pretty = pretty.drop(columns=["coins", "date", "equity_after"])
     st.dataframe(pretty, use_container_width=True, hide_index=True)
 
     csv = pretty.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Download trade log (CSV)", csv, f"{symbol}_time_strategy.csv", "text/csv")
+    st.download_button("⬇️  Download trade log (CSV)", csv, f"{symbol}_time_strategy.csv", "text/csv")
 else:
     st.info("Set your parameters above and click **Run backtest**.")
