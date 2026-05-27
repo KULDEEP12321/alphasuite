@@ -40,3 +40,6 @@ beautifulsoup4
 feedparser
 curl_cffi
 markdown-pdf
+
+# MCP server — exposes AlphaSuite data tools to Claude (Code / Desktop / API)
+mcp[cli]
