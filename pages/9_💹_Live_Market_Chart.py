@@ -85,15 +85,31 @@ hero_header(
 
 CRYPTO_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT"]
 STOCK_SYMBOLS = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "TSLA", "META", "SPY", "QQQ"]
+# Indian market: indices first (Nifty 50, Sensex, Bank Nifty — the key F&O underlyings),
+# then liquid equities. yfinance gives ~15 min delayed quotes in INR.
+INDIA_SYMBOLS = [
+    "^NSEI", "^BSESN", "^NSEBANK",
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", "SBIN.NS",
+]
+INDIA_LABEL = {
+    "^NSEI": "NIFTY 50", "^BSESN": "SENSEX", "^NSEBANK": "BANKNIFTY",
+}
 CRYPTO_INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d"]
 STOCK_INTERVALS = ["1m", "5m", "15m", "30m", "1h", "1d"]
 YF_PERIOD = {"1m": "5d", "5m": "1mo", "15m": "1mo", "30m": "1mo", "1h": "3mo", "1d": "2y"}
 
+ASSET_CLASS_DEFAULTS = {
+    "Crypto": (CRYPTO_SYMBOLS, CRYPTO_INTERVALS),
+    "Stocks (US)": (STOCK_SYMBOLS, STOCK_INTERVALS),
+    "India": (INDIA_SYMBOLS, STOCK_INTERVALS),
+}
+CURRENCY = {"Crypto": "$", "Stocks (US)": "$", "India": "₹"}
+
 
 def _reset_symbol():
     new_class = st.session_state["asset_class"]
-    st.session_state["symbol"] = CRYPTO_SYMBOLS[0] if new_class == "Crypto" else STOCK_SYMBOLS[0]
-    valid = CRYPTO_INTERVALS if new_class == "Crypto" else STOCK_INTERVALS
+    syms, valid = ASSET_CLASS_DEFAULTS[new_class]
+    st.session_state["symbol"] = syms[0]
     if st.session_state.get("interval") not in valid:
         st.session_state["interval"] = "15m" if "15m" in valid else valid[0]
 
@@ -108,14 +124,14 @@ if "interval" not in st.session_state:
 
 asset_class = st.segmented_control(
     "Market",
-    ["Crypto", "Stocks"],
+    list(ASSET_CLASS_DEFAULTS.keys()),
     key="asset_class",
     on_change=_reset_symbol,
 )
 asset_class = asset_class or "Crypto"
 
-symbols = CRYPTO_SYMBOLS if asset_class == "Crypto" else STOCK_SYMBOLS
-intervals = CRYPTO_INTERVALS if asset_class == "Crypto" else STOCK_INTERVALS
+symbols, intervals = ASSET_CLASS_DEFAULTS[asset_class]
+ccy = CURRENCY[asset_class]
 
 
 # --- Data fetchers ---
@@ -181,7 +197,8 @@ for i, sym in enumerate(symbols):
         try:
             q = get_quote(sym, asset_class)
             marker = "● " if sym == st.session_state["symbol"] else ""
-            st.metric(f"{marker}{sym}", f"${q['last']:,.2f}", f"{q['pct']:+.2f}%")
+            label = INDIA_LABEL.get(sym, sym)
+            st.metric(f"{marker}{label}", f"{ccy}{q['last']:,.2f}", f"{q['pct']:+.2f}%")
             if st.button("Select", key=f"sel_{sym}", use_container_width=True):
                 st.session_state["symbol"] = sym
                 st.rerun()
@@ -313,12 +330,12 @@ with left:
     st.markdown(
         f"""
         <div class="price-panel">
-            <div class="sym">{sym} · {interval}</div>
-            <div class="px">${q['last']:,.2f}</div>
+            <div class="sym">{INDIA_LABEL.get(sym, sym)} · {interval}</div>
+            <div class="px">{ccy}{q['last']:,.2f}</div>
             <div class="delta" style="color: {delta_color};">{arrow} {q['pct']:+.2f}% · 24h</div>
             <div class="ohlc">
-                High: <b>${q['high']:,.2f}</b><br/>
-                Low: <b>${q['low']:,.2f}</b><br/>
+                High: <b>{ccy}{q['high']:,.2f}</b><br/>
+                Low: <b>{ccy}{q['low']:,.2f}</b><br/>
                 Volume: <b>{q['vol']:,.0f}</b>
             </div>
         </div>
@@ -334,7 +351,12 @@ with right:
     )
     st.markdown(chart_shell_close(), unsafe_allow_html=True)
 
-source_note = "Binance · real-time" if asset_class == "Crypto" else "Yahoo Finance · ~15 min delayed"
+if asset_class == "Crypto":
+    source_note = "Binance · real-time"
+elif asset_class == "India":
+    source_note = "Yahoo Finance · NSE/BSE · ~15 min delayed"
+else:
+    source_note = "Yahoo Finance · ~15 min delayed"
 st.caption(
     f"Updated {time.strftime('%H:%M:%S')} · auto-refresh every {refresh_s}s · {source_note}"
 )
