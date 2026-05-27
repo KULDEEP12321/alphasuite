@@ -14,6 +14,7 @@ PCR and max pain are derivable from OI alone and are shown.
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 import yfinance as yf
@@ -389,3 +390,117 @@ st.caption(
     "Spot a vertical band → consistent strike sentiment across expiries. "
     "Spot a horizontal band → that expiry attracts most activity (usually the nearest weekly)."
 )
+
+
+# ───────────────────────── Max-pain history (NSE bhavcopy) ─────────────────────────
+import io  # noqa: E402
+import zipfile  # noqa: E402
+from datetime import date as _date, timedelta  # noqa: E402
+
+
+@st.cache_data(ttl=24 * 3600, show_spinner=False)
+def _fetch_bhavcopy(yyyymmdd: str) -> pd.DataFrame | None:
+    """Download NSE's daily F&O bhavcopy CSV (returns None on holiday/missing)."""
+    url = f"https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{yyyymmdd}_F_0000.csv.zip"
+    s = cffi.Session(impersonate="chrome120")
+    try:
+        r = s.get(url, timeout=20)
+        if r.status_code != 200 or len(r.content) < 1000:
+            return None
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        with z.open(z.namelist()[0]) as f:
+            return pd.read_csv(f)
+    except Exception:
+        return None
+
+
+def _max_pain_from_bhav(bhav: pd.DataFrame, sym: str, exp_iso: str) -> dict | None:
+    """Filter bhavcopy → compute max-pain / spot / PCR for one symbol+expiry."""
+    rows = bhav[
+        (bhav["TckrSymb"] == sym.upper())
+        & (bhav["XpryDt"] == exp_iso)
+        & (bhav["OptnTp"].isin(["CE", "PE"]))
+    ]
+    if rows.empty:
+        return None
+    ce = rows[rows["OptnTp"] == "CE"].groupby("StrkPric")["OpnIntrst"].sum()
+    pe = rows[rows["OptnTp"] == "PE"].groupby("StrkPric")["OpnIntrst"].sum()
+    all_strikes = sorted(set(ce.index) | set(pe.index))
+    ce_arr = np.array([float(ce.get(k, 0)) for k in all_strikes])
+    pe_arr = np.array([float(pe.get(k, 0)) for k in all_strikes])
+    ks = np.array(all_strikes, dtype=float)
+    losses = [
+        float((np.clip(k - ks, 0, None) * ce_arr).sum() + (np.clip(ks - k, 0, None) * pe_arr).sum())
+        for k in ks
+    ]
+    mp = int(ks[int(np.argmin(losses))])
+    spot = float(rows["UndrlygPric"].iloc[0])
+    tot_ce, tot_pe = float(ce_arr.sum()), float(pe_arr.sum())
+    return {
+        "max_pain": mp, "spot": spot,
+        "pcr": tot_pe / tot_ce if tot_ce else 0,
+        "tot_ce_oi": int(tot_ce), "tot_pe_oi": int(tot_pe),
+    }
+
+
+st.markdown(section_header("📈", f"Max-pain history · {symbol} · {expiry}"), unsafe_allow_html=True)
+
+n_days = st.slider("Trading days back", 3, 15, 7, key="mp_days")
+
+# Walk back collecting trading days (skip weekends; NSE holidays surface as bhavcopy-missing)
+collected = []
+d = _date.today() - timedelta(days=1)  # start with yesterday (today's bhavcopy publishes after close)
+tried = 0
+with st.spinner(f"Fetching last {n_days} bhavcopies from NSE archives…"):
+    while len(collected) < n_days and tried < n_days * 3:
+        tried += 1
+        if d.weekday() < 5:  # Mon-Fri only
+            bhav = _fetch_bhavcopy(d.strftime("%Y%m%d"))
+            if bhav is not None:
+                snap = _max_pain_from_bhav(bhav, symbol, expiry)
+                if snap:
+                    collected.append({"date": d.isoformat(), **snap})
+        d -= timedelta(days=1)
+
+if not collected:
+    st.warning(
+        "No bhavcopy data found for this expiry in the lookback window. "
+        "The chosen expiry may be newer than any closed trading day."
+    )
+else:
+    hist = pd.DataFrame(collected).sort_values("date").reset_index(drop=True)
+    hist_chart = hist.set_index("date")[["spot", "max_pain"]]
+
+    h1, h2 = st.columns([3, 2])
+    with h1:
+        st.markdown("**Spot vs Max Pain** — convergence on expiry day signals option-writer pin")
+        st.line_chart(hist_chart, color=["#fafafa", "#8b5cf6"], height=280)
+    with h2:
+        st.markdown("**Daily snapshot**")
+        show = hist[["date", "spot", "max_pain", "pcr"]].copy()
+        show["gap"] = (show["spot"] - show["max_pain"]).round(2)
+        show["pcr"] = show["pcr"].round(2)
+        show["spot"] = show["spot"].round(2)
+        st.dataframe(
+            show.style.format({"spot": "{:,.2f}", "max_pain": "{:,}", "gap": "{:+,.2f}"}),
+            use_container_width=True, hide_index=True,
+        )
+
+    # Simple read-out
+    today_mp = collected[-1]["max_pain"]
+    week_avg_mp = int(np.mean([c["max_pain"] for c in collected]))
+    today_gap = collected[-1]["spot"] - today_mp
+    pcr_avg = float(np.mean([c["pcr"] for c in collected]))
+    pcr_today = collected[-1]["pcr"]
+    pcr_delta = pcr_today - pcr_avg
+
+    mp1, mp2, mp3, mp4 = st.columns(4)
+    mp1.metric("Latest max pain", f"{today_mp:,}")
+    mp2.metric(f"{n_days}-day avg max pain", f"{week_avg_mp:,}", f"{today_mp - week_avg_mp:+,}")
+    mp3.metric("Latest spot − max pain", f"{today_gap:+,.2f}")
+    mp4.metric("PCR (today vs avg)", f"{pcr_today:.2f}", f"{pcr_delta:+.2f}")
+
+    st.caption(
+        "Source: NSE F&O bhavcopy (free public archive) · one CSV per trading day · cached 24h. "
+        "Holidays and missing days are skipped automatically."
+    )
