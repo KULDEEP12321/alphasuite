@@ -284,3 +284,108 @@ st.caption(
     f"PCR = total PE OI ÷ total CE OI = {pcr:.3f}. "
     "IV and change-in-OI need a paid feed and are not shown."
 )
+
+
+# ───────────────────────── OI build-up across expiries ─────────────────────────
+def build_oi_pivots(
+    insts: list[dict],
+    expiries_subset: list[str],
+    atm_strike: float,
+    n_around: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return (CE pivot, PE pivot): rows = strikes, columns = expiries, values = OI."""
+    rows = []
+    for it in insts:
+        if it.get("segment") != "NFO-OPT":
+            continue
+        if it.get("expiry") not in expiries_subset:
+            continue
+        rows.append({
+            "strike": float(it["strike"]),
+            "expiry": it["expiry"],
+            "side": it["instrument_type"],
+            "oi": int(it.get("oi") or 0),
+        })
+    if not rows:
+        return pd.DataFrame(), pd.DataFrame()
+    long = pd.DataFrame(rows)
+
+    def _pivot(side: str) -> pd.DataFrame:
+        p = (long[long["side"] == side]
+             .pivot_table(index="strike", columns="expiry", values="oi", aggfunc="sum")
+             .fillna(0).astype(int))
+        if p.empty:
+            return p
+        all_strikes = sorted(p.index.tolist())
+        atm_pos = min(range(len(all_strikes)), key=lambda i: abs(all_strikes[i] - atm_strike))
+        lo = all_strikes[max(0, atm_pos - n_around)]
+        hi = all_strikes[min(len(all_strikes) - 1, atm_pos + n_around)]
+        p = p.loc[(p.index >= lo) & (p.index <= hi)]
+        # Order columns by expiry date (ISO strings sort correctly)
+        return p.reindex(columns=sorted(p.columns))
+
+    return _pivot("CE"), _pivot("PE")
+
+
+st.markdown(section_header("🌐", "OI build-up across expiries"), unsafe_allow_html=True)
+
+n_exp = st.slider(
+    "Expiries to compare",
+    min_value=2, max_value=min(8, len(expiries)),
+    value=min(4, len(expiries)),
+)
+chosen_expiries = expiries[:n_exp]
+
+ce_pivot, pe_pivot = build_oi_pivots(instruments, chosen_expiries, atm, n_strikes)
+
+# Per-expiry totals — quick read on where the action is
+totals = []
+for exp in chosen_expiries:
+    ce_t = int(ce_pivot[exp].sum()) if exp in ce_pivot.columns else 0
+    pe_t = int(pe_pivot[exp].sum()) if exp in pe_pivot.columns else 0
+    totals.append({"expiry": exp, "CE OI": ce_t, "PE OI": pe_t, "PCR": round(pe_t / ce_t, 2) if ce_t else 0})
+totals_df = pd.DataFrame(totals).set_index("expiry")
+
+tcol1, tcol2 = st.columns([3, 2])
+with tcol1:
+    st.markdown("**Total OI per expiry (windowed strikes only)**")
+    st.bar_chart(totals_df[["CE OI", "PE OI"]], color=["#10d9a0", "#ff5470"], height=240)
+with tcol2:
+    st.markdown("**Per-expiry summary**")
+    st.dataframe(
+        totals_df.style.format({"CE OI": "{:,}", "PE OI": "{:,}", "PCR": "{:.2f}"}),
+        use_container_width=True,
+    )
+
+# Heatmaps: strike × expiry intensity, CE green, PE red
+hcol1, hcol2 = st.columns(2)
+with hcol1:
+    st.markdown("**Call (CE) OI · strike × expiry**")
+    if ce_pivot.empty:
+        st.info("No CE data for the chosen expiries.")
+    else:
+        st.dataframe(
+            ce_pivot.style
+                .background_gradient(cmap="Greens", axis=None)
+                .format("{:,}"),
+            use_container_width=True,
+            height=min(560, 38 * (len(ce_pivot) + 1)),
+        )
+with hcol2:
+    st.markdown("**Put (PE) OI · strike × expiry**")
+    if pe_pivot.empty:
+        st.info("No PE data for the chosen expiries.")
+    else:
+        st.dataframe(
+            pe_pivot.style
+                .background_gradient(cmap="Reds", axis=None)
+                .format("{:,}"),
+            use_container_width=True,
+            height=min(560, 38 * (len(pe_pivot) + 1)),
+        )
+
+st.caption(
+    "Darker cell = higher OI at that strike for that expiry. "
+    "Spot a vertical band → consistent strike sentiment across expiries. "
+    "Spot a horizontal band → that expiry attracts most activity (usually the nearest weekly)."
+)
