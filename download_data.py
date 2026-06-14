@@ -162,7 +162,9 @@ def run_refresh_ticker(ticker):
     if not result or 'shareprices' not in result or result['shareprices'].empty:
         logger.info(f"No data found or failed to refresh for {ticker}")
     else:
-        logger.info(f"Successfully refreshed data for {ticker}. Last date: {result['shareprices'].index[-1].date()}")
+        last_idx = result['shareprices'].index[-1]
+        last_date = last_idx.date() if hasattr(last_idx, 'date') else last_idx
+        logger.info(f"Successfully refreshed data for {ticker}. Last date: {last_date}")
     logger.info("--- Ticker Refresh Finished ---")
 
 def run_fix_split_data(market, batch_size):
